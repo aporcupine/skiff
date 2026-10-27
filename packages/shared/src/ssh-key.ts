@@ -107,3 +107,21 @@ function fromBase64Url(s: string): Uint8Array {
 function toBase64(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes));
 }
+
+/**
+ * A command to paste into a shell on the server that adds this key to the
+ * user's authorized_keys, creating ~/.ssh with the permissions sshd insists on.
+ */
+export function authorizedKeysCommand(line: string): string {
+  // Single quotes keep the shell from touching the key; a quote inside the
+  // comment is closed, escaped and reopened. printf rather than echo, because
+  // some shells' echo turns backslashes in the comment into control codes.
+  const quoted = "'" + line.replace(/'/g, `'\\''`) + "'";
+  return `mkdir -p ~/.ssh && chmod 700 ~/.ssh && printf '%s\\n' ${quoted} >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
+}
+
+/** A comment that says where a key came from, e.g. "skiff-prod-web-1-2026-10-27". */
+export function defaultKeyComment(hostName: string, date = new Date()): string {
+  const name = hostName.trim().toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/^-+|-+$/g, "");
+  return ["skiff", name, date.toISOString().slice(0, 10)].filter(Boolean).join("-");
+}

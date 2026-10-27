@@ -2,11 +2,11 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, verify, KeyObject } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ssh2 from "ssh2";
-import { fingerprint, keyType, privateKeyPem, publicKeyBlob, publicKeyLine } from "./ssh-key.js";
+import { authorizedKeysCommand, defaultKeyComment, fingerprint, keyType, privateKeyPem, publicKeyBlob, publicKeyLine } from "./ssh-key.js";
 
 // ssh2 is the library Skiff connects with, so it's the judge of whether our
 // output is a valid SSH key. It's an independent implementation, not ours.
@@ -45,9 +45,14 @@ function parse(key: string) {
   return Array.isArray(parsed) ? parsed[0]! : parsed;
 }
 
+// Tests that run a POSIX shell, or rely on Unix file permissions, can't run
+// on Windows; they're skipped there.
+const isWindows = process.platform === "win32";
+
 // OpenSSH's own ssh-keygen is the strictest reader of these files. It's on
 // CI's Ubuntu runners; where it isn't installed, those tests are skipped.
-const hasSshKeygen = spawnSync("ssh-keygen", ["-?"]).error === undefined;
+// Windows is skipped too: ssh-keygen there checks file ACLs, not the mode we set.
+const hasSshKeygen = !isWindows && spawnSync("ssh-keygen", ["-?"]).error === undefined;
 
 /** Runs ssh-keygen on a private key file and returns what it prints. */
 function sshKeygen(args: string[], pem: string): string {
@@ -226,5 +231,70 @@ describe("Unsupported keys", () => {
   test("a key without its public part is refused", () => {
     assert.throws(() => publicKeyBlob({ kty: "OKP", crv: "Ed25519" }), /missing its public part/);
     assert.throws(() => publicKeyBlob({ kty: "EC", crv: "P-256", x: "AA" }), /missing its public part/);
+  });
+});
+
+describe("Install command", { skip: isWindows && "needs a POSIX shell" }, () => {
+  // Runs the command for real in a shell, with a throwaway home directory.
+  function runInFreshHome(command: string) {
+    const home = mkdtempSync(join(tmpdir(), "skiff-home-"));
+    try {
+      const run = spawnSync("sh", ["-c", command], { env: { ...process.env, HOME: home }, encoding: "utf-8" });
+      assert.equal(run.status, 0, `the command failed: ${run.stderr}`);
+      return {
+        authorizedKeys: readFileSync(join(home, ".ssh", "authorized_keys"), "utf-8"),
+        sshDirMode: statSync(join(home, ".ssh")).mode & 0o777,
+        fileMode: statSync(join(home, ".ssh", "authorized_keys")).mode & 0o777,
+      };
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  test("adds the key to authorized_keys, with the permissions sshd needs", async () => {
+    const line = publicKeyLine(await newJwk(keyTypes[0]), "skiff-web-1");
+    const result = runInFreshHome(authorizedKeysCommand(line));
+    assert.equal(result.authorizedKeys, line + "\n");
+    assert.equal(result.sshDirMode, 0o700);
+    assert.equal(result.fileMode, 0o600);
+  });
+
+  test("keeps keys that are already there", async () => {
+    const first = publicKeyLine(await newJwk(keyTypes[0]), "first");
+    const second = publicKeyLine(await newJwk(keyTypes[0]), "second");
+    const result = runInFreshHome(authorizedKeysCommand(first) + " && " + authorizedKeysCommand(second));
+    assert.equal(result.authorizedKeys, first + "\n" + second + "\n");
+  });
+
+  // A comment could hold anything the user typed; none of it may run as a command.
+  test("copes with quotes and shell characters in the comment", async () => {
+    const line = publicKeyLine(await newJwk(keyTypes[0]), `it's $(touch pwned) \`id\` "x"; rm -rf /tmp/nope`);
+    assert.equal(runInFreshHome(authorizedKeysCommand(line)).authorizedKeys, line + "\n");
+  });
+  // Some shells' echo turns \c, \n and friends into control codes; \c would
+  // cut the line short and drop its newline, gluing the next key onto it.
+  test("writes backslashes in the comment exactly as typed", async () => {
+    const line = publicKeyLine(await newJwk(keyTypes[0]), "tom\\cafter \\n \\t \\\\ end");
+    assert.equal(runInFreshHome(authorizedKeysCommand(line)).authorizedKeys, line + "\n");
+  });
+});
+
+describe("Default key comment", () => {
+  const date = new Date("2026-10-27T12:00:00Z");
+
+  test("names the app, the host and the date", () => {
+    assert.equal(defaultKeyComment("prod-web-1", date), "skiff-prod-web-1-2026-10-27");
+  });
+
+  test("turns spaces and odd characters into dashes", () => {
+    assert.equal(defaultKeyComment("  Production Web #1 ", date), "skiff-production-web-1-2026-10-27");
+  });
+
+  test("keeps the dots in a hostname", () => {
+    assert.equal(defaultKeyComment("web.example.com", date), "skiff-web.example.com-2026-10-27");
+  });
+
+  test("still works with no host name yet", () => {
+    assert.equal(defaultKeyComment("", date), "skiff-2026-10-27");
   });
 });

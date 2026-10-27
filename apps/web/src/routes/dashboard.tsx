@@ -7,6 +7,9 @@ import { useTheme } from "@/lib/theme";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import * as I from "@/components/icons";
+import { GenerateKeyRow, GeneratedKeyPanel } from "@/components/KeyGen";
+import type { GeneratedKey } from "@/lib/keygen";
+import { defaultKeyComment, privateKeyPem } from "@skiff/shared";
 
 export function DashboardRoute() {
   const navigate = useNavigate();
@@ -586,6 +589,10 @@ function HostDialog({
   );
   const [credValue, setCredValue] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  // A key generated here. Its private part is only sent when the host is saved.
+  const [generatedKey, setGeneratedKey] = useState<GeneratedKey | null>(null);
+  const [keyComment, setKeyComment] = useState("");
+  const [generatingKey, setGeneratingKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { status } = useVault();
@@ -644,7 +651,9 @@ function HostDialog({
         tags: existing?.tags ?? [],
         starred: existing?.starred ?? false,
       };
-      if (credValue) {
+      if (authMethod === "key" && generatedKey) {
+        payload.credential = { kind: "key", value: privateKeyPem(generatedKey.jwk, keyComment) };
+      } else if (credValue) {
         payload.credential = authMethod === "key" && passphrase
           ? { kind: "key+passphrase", value: credValue, passphrase }
           : { kind: authMethod, value: credValue };
@@ -756,7 +765,15 @@ function HostDialog({
             <label>
               {mode === "edit" ? "New credential (optional — leave blank to keep existing)" : "Credential"}
             </label>
-            {authMethod === "password"
+            {authMethod === "key" && generatedKey
+              ? <GeneratedKeyPanel
+                  generatedKey={generatedKey}
+                  comment={keyComment}
+                  onCommentChange={setKeyComment}
+                  onDiscard={() => setGeneratedKey(null)}
+                  replacingKey={mode === "edit" && !!existing?.credential_id}
+                />
+              : authMethod === "password"
               ? <input
                   type="password"
                   value={credValue}
@@ -773,8 +790,19 @@ function HostDialog({
                   style={{ resize: "vertical" }}
                 />
             }
+            {authMethod === "key" && !generatedKey && (
+              <GenerateKeyRow
+                onBusyChange={setGeneratingKey}
+                onGenerated={(key) => {
+                  setGeneratedKey(key);
+                  setKeyComment(defaultKeyComment(label.trim() || hostname.trim()));
+                  setCredValue("");
+                  setPassphrase("");
+                }}
+              />
+            )}
           </div>
-          {authMethod === "key" && (
+          {authMethod === "key" && !generatedKey && (
             <div className="field">
               <label>Key passphrase (only if the key is encrypted)</label>
               <input
@@ -875,7 +903,7 @@ function HostDialog({
           {errors.form && <div className="field-error">{errors.form}</div>}
           <div className="dialog__footer">
             <button type="button" className="btn btn--secondary" onClick={() => onClose(false)}>Cancel</button>
-            <button type="submit" className="btn btn--primary" disabled={busy || !hostname || !username}>
+            <button type="submit" className="btn btn--primary" disabled={busy || generatingKey || !hostname || !username}>
               {busy ? "Saving…" : (mode === "edit" ? "Save changes" : "Save host")}
             </button>
           </div>
