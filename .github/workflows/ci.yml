@@ -39,6 +39,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Shared package tests
+        run: pnpm --filter @skiff/shared test
+
       - name: API integration tests
         run: pnpm --filter @skiff/api test
 

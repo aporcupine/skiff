@@ -15,9 +15,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node run-tests.mjs"
   },
   "devDependencies": {
+    "tsx": "^4.16.5",
     "typescript": "^5.5.0"
   }
 }
