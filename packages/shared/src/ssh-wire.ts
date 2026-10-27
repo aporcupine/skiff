@@ -31,7 +31,8 @@ export class SshWriter {
     let start = 0;
     while (start < bytes.length && bytes[start] === 0) start++;
     const trimmed = bytes.subarray(start);
-    const negative = trimmed.length > 0 && (trimmed[0]! & 0x80) !== 0;
+    const first = trimmed[0];
+    const negative = first !== undefined && (first & 0x80) !== 0;
     return this.string(negative ? concatBytes(new Uint8Array([0]), trimmed) : trimmed);
   }
 
