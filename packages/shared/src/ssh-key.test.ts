@@ -1,22 +1,50 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, createPublicKey } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import ssh2 from "ssh2";
-import { fingerprint, keyType, publicKeyBlob, publicKeyLine } from "./ssh-key.js";
+import { fingerprint, keyType, privateKeyPem, publicKeyBlob, publicKeyLine } from "./ssh-key.js";
 
 // ssh2 is the library Skiff connects with, so it's the judge of whether our
 // output is a valid SSH key. It's an independent implementation, not ours.
 const { parseKey } = ssh2.utils;
 
-async function newEd25519Jwk() {
+async function newEd25519Pair() {
   const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-  return crypto.subtle.exportKey("jwk", pair.privateKey);
+  return { pair, jwk: await crypto.subtle.exportKey("jwk", pair.privateKey) };
 }
 
-function parsePublic(line: string) {
-  const parsed = parseKey(line);
+async function newEd25519Jwk() {
+  return (await newEd25519Pair()).jwk;
+}
+
+function parse(key: string) {
+  const parsed = parseKey(key);
   assert.ok(!(parsed instanceof Error), `ssh2 rejected the key: ${parsed}`);
   return Array.isArray(parsed) ? parsed[0]! : parsed;
+}
+const parsePublic = parse;
+
+// OpenSSH's own ssh-keygen is the strictest reader of these files. It's on
+// CI's Ubuntu runners; where it isn't installed, those tests are skipped.
+const hasSshKeygen = spawnSync("ssh-keygen", ["-?"]).error === undefined;
+
+/** Runs ssh-keygen on a private key file and returns what it prints. */
+function sshKeygen(args: string[], pem: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "skiff-key-"));
+  try {
+    const file = join(dir, "id");
+    // ssh-keygen refuses to read a private key other users could read.
+    writeFileSync(file, pem, { mode: 0o600 });
+    const run = spawnSync("ssh-keygen", [...args, "-f", file], { encoding: "utf-8" });
+    assert.equal(run.status, 0, `ssh-keygen failed: ${run.stderr}`);
+    return run.stdout.trim();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 describe("Ed25519 public key", () => {
@@ -78,6 +106,68 @@ describe("Fingerprint", () => {
     const a = await fingerprint(publicKeyBlob(await newEd25519Jwk()));
     const b = await fingerprint(publicKeyBlob(await newEd25519Jwk()));
     assert.notEqual(a, b);
+  });
+});
+
+describe("Ed25519 private key", () => {
+  test("is accepted by ssh2 as an Ed25519 private key", async () => {
+    const key = parse(privateKeyPem(await newEd25519Jwk()));
+    assert.equal(key.type, "ssh-ed25519");
+    assert.equal(key.isPrivateKey(), true);
+  });
+
+  test("carries the same public key as the public key line", async () => {
+    const jwk = await newEd25519Jwk();
+    assert.deepEqual(new Uint8Array(parse(privateKeyPem(jwk)).getPublicSSH()), publicKeyBlob(jwk));
+  });
+
+  // The real proof it's the right private key: what it signs, the original
+  // WebCrypto public key accepts.
+  test("signs data that the original public key verifies", async () => {
+    const { pair, jwk } = await newEd25519Pair();
+    const data = new TextEncoder().encode("hello from skiff");
+    const signature = parse(privateKeyPem(jwk)).sign(data);
+    assert.ok(!(signature instanceof Error), `ssh2 couldn't sign: ${signature}`);
+    assert.equal(await crypto.subtle.verify({ name: "Ed25519" }, pair.publicKey, signature, data), true);
+  });
+
+  test("stores the comment", async () => {
+    assert.equal(parse(privateKeyPem(await newEd25519Jwk(), "skiff-web-1")).comment, "skiff-web-1");
+  });
+
+  test("is laid out like an ssh-keygen file", async () => {
+    const lines = privateKeyPem(await newEd25519Jwk()).split("\n");
+    assert.equal(lines[0], "-----BEGIN OPENSSH PRIVATE KEY-----");
+    assert.equal(lines.at(-2), "-----END OPENSSH PRIVATE KEY-----");
+    assert.equal(lines.at(-1), "", "ends with a newline");
+    for (const line of lines.slice(1, -2)) assert.ok(line.length <= 70, `line too long: ${line.length}`);
+  });
+
+  test("a key without its private part is refused", () => {
+    assert.throws(() => privateKeyPem({ kty: "OKP", crv: "Ed25519", x: "AA" }), /missing its private part/);
+  });
+});
+
+describe("Ed25519 private key, checked by OpenSSH's ssh-keygen", { skip: !hasSshKeygen && "ssh-keygen isn't installed" }, () => {
+  test("gives back exactly our public key line", async () => {
+    const jwk = await newEd25519Jwk();
+    assert.equal(sshKeygen(["-y"], privateKeyPem(jwk, "skiff-web-1")), publicKeyLine(jwk, "skiff-web-1"));
+  });
+
+  test("shows the same fingerprint as ours", async () => {
+    const jwk = await newEd25519Jwk();
+    const printed = sshKeygen(["-l"], privateKeyPem(jwk));
+    assert.ok(printed.includes(await fingerprint(publicKeyBlob(jwk))), printed);
+  });
+
+  // The comment's length decides how much padding goes on the end, so try
+  // every padding length (0-7) twice over. ssh-keygen rejects bad padding.
+  test("accepts every comment length, so every amount of padding", async () => {
+    const jwk = await newEd25519Jwk();
+    for (let n = 0; n < 16; n++) {
+      const comment = "c".repeat(n);
+      assert.equal(sshKeygen(["-y"], privateKeyPem(jwk, comment)), publicKeyLine(jwk, comment));
+    }
   });
 });
 
