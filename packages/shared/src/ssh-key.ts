@@ -11,12 +11,14 @@ export interface KeyJwk {
   kty?: string;
   crv?: string;
   x?: string;
+  y?: string;
   d?: string;
 }
 
 /** The SSH name for the key's type, e.g. "ssh-ed25519". */
 export function keyType(jwk: KeyJwk): string {
   if (jwk.kty === "OKP" && jwk.crv === "Ed25519") return "ssh-ed25519";
+  if (jwk.kty === "EC" && jwk.crv === "P-256") return "ecdsa-sha2-nistp256";
   throw new Error(`Unsupported key type: ${jwk.kty ?? "?"} ${jwk.crv ?? ""}`.trim());
 }
 
@@ -72,13 +74,23 @@ export async function fingerprint(blob: Uint8Array): Promise<string> {
 
 function writePublic(w: SshWriter, jwk: KeyJwk): void {
   if (!jwk.x) throw new Error("The key is missing its public part.");
-  w.string(fromBase64Url(jwk.x));
+  if (jwk.kty === "EC") {
+    if (!jwk.y) throw new Error("The key is missing its public part.");
+    // The curve name, then the public point uncompressed: 0x04, x, y.
+    w.string("nistp256").string(concatBytes(new Uint8Array([4]), fromBase64Url(jwk.x), fromBase64Url(jwk.y)));
+  } else {
+    w.string(fromBase64Url(jwk.x));
+  }
 }
 
 function writePrivate(w: SshWriter, jwk: KeyJwk): void {
   if (!jwk.d || !jwk.x) throw new Error("The key is missing its private part.");
-  // OpenSSH stores the 32-byte seed followed by the public key.
-  w.string(concatBytes(fromBase64Url(jwk.d), fromBase64Url(jwk.x)));
+  if (jwk.kty === "EC") {
+    w.mpint(fromBase64Url(jwk.d));
+  } else {
+    // OpenSSH stores the 32-byte seed followed by the public key.
+    w.string(concatBytes(fromBase64Url(jwk.d), fromBase64Url(jwk.x)));
+  }
 }
 
 function cleanComment(comment: string): string {
