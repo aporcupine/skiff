@@ -114,9 +114,10 @@ function toBase64(bytes: Uint8Array): string {
  */
 export function authorizedKeysCommand(line: string): string {
   // Single quotes keep the shell from touching the key; a quote inside the
-  // comment is closed, escaped and reopened.
+  // comment is closed, escaped and reopened. printf rather than echo, because
+  // some shells' echo turns backslashes in the comment into control codes.
   const quoted = "'" + line.replace(/'/g, `'\\''`) + "'";
-  return `mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo ${quoted} >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
+  return `mkdir -p ~/.ssh && chmod 700 ~/.ssh && printf '%s\\n' ${quoted} >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
 }
 
 /** A comment that says where a key came from, e.g. "skiff-prod-web-1-2026-10-27". */

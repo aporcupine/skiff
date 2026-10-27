@@ -1,11 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { authorizedKeysCommand, publicKeyLine } from "@skiff/shared";
 import { KEY_KINDS, generateKey, supportedKeyKinds, type GeneratedKey, type KeyKind } from "@/lib/keygen";
 import { useCopyState, writeClipboard } from "@/components/MemoryEntryParts";
 import * as I from "@/components/icons";
 
 /** "or Generate a new key", shown under the private key box. */
-export function GenerateKeyRow({ onGenerated }: { onGenerated: (key: GeneratedKey) => void }) {
+export function GenerateKeyRow({
+  onGenerated,
+  onBusyChange,
+}: {
+  onGenerated: (key: GeneratedKey) => void;
+  /** So the dialog can hold off saving until the key exists. */
+  onBusyChange: (busy: boolean) => void;
+}) {
   const [kinds, setKinds] = useState<KeyKind[] | null>(null);
   const [kind, setKind] = useState<KeyKind>("ed25519");
   const [busy, setBusy] = useState(false);
@@ -34,6 +41,7 @@ export function GenerateKeyRow({ onGenerated }: { onGenerated: (key: GeneratedKe
 
   const generate = async () => {
     setBusy(true);
+    onBusyChange(true);
     setError("");
     try {
       onGenerated(await generateKey(kind));
@@ -41,6 +49,7 @@ export function GenerateKeyRow({ onGenerated }: { onGenerated: (key: GeneratedKe
       setError(err?.message || "Couldn't generate a key.");
     } finally {
       setBusy(false);
+      onBusyChange(false);
     }
   };
 
@@ -79,6 +88,7 @@ export function GeneratedKeyPanel({
   replacingKey: boolean;
 }) {
   const line = publicKeyLine(generatedKey.jwk, comment);
+  const commentId = useId();
   return (
     <div className="keygen">
       <div className="keygen__head">
@@ -87,8 +97,8 @@ export function GeneratedKeyPanel({
       </div>
 
       <div className="field">
-        <label>Comment (helps you spot this key in authorized_keys)</label>
-        <input value={comment} onChange={(e) => onCommentChange(e.target.value)} className="mono" spellCheck={false} />
+        <label htmlFor={commentId}>Comment (helps you spot this key in authorized_keys)</label>
+        <input id={commentId} value={comment} onChange={(e) => onCommentChange(e.target.value)} className="mono" spellCheck={false} />
       </div>
 
       <div className="field">

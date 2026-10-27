@@ -45,9 +45,14 @@ function parse(key: string) {
   return Array.isArray(parsed) ? parsed[0]! : parsed;
 }
 
+// Tests that run a POSIX shell, or rely on Unix file permissions, can't run
+// on Windows; they're skipped there.
+const isWindows = process.platform === "win32";
+
 // OpenSSH's own ssh-keygen is the strictest reader of these files. It's on
 // CI's Ubuntu runners; where it isn't installed, those tests are skipped.
-const hasSshKeygen = spawnSync("ssh-keygen", ["-?"]).error === undefined;
+// Windows is skipped too: ssh-keygen there checks file ACLs, not the mode we set.
+const hasSshKeygen = !isWindows && spawnSync("ssh-keygen", ["-?"]).error === undefined;
 
 /** Runs ssh-keygen on a private key file and returns what it prints. */
 function sshKeygen(args: string[], pem: string): string {
@@ -229,7 +234,7 @@ describe("Unsupported keys", () => {
   });
 });
 
-describe("Install command", () => {
+describe("Install command", { skip: isWindows && "needs a POSIX shell" }, () => {
   // Runs the command for real in a shell, with a throwaway home directory.
   function runInFreshHome(command: string) {
     const home = mkdtempSync(join(tmpdir(), "skiff-home-"));
@@ -264,6 +269,12 @@ describe("Install command", () => {
   // A comment could hold anything the user typed; none of it may run as a command.
   test("copes with quotes and shell characters in the comment", async () => {
     const line = publicKeyLine(await newJwk(keyTypes[0]), `it's $(touch pwned) \`id\` "x"; rm -rf /tmp/nope`);
+    assert.equal(runInFreshHome(authorizedKeysCommand(line)).authorizedKeys, line + "\n");
+  });
+  // Some shells' echo turns \c, \n and friends into control codes; \c would
+  // cut the line short and drop its newline, gluing the next key onto it.
+  test("writes backslashes in the comment exactly as typed", async () => {
+    const line = publicKeyLine(await newJwk(keyTypes[0]), "tom\\cafter \\n \\t \\\\ end");
     assert.equal(runInFreshHome(authorizedKeysCommand(line)).authorizedKeys, line + "\n");
   });
 });

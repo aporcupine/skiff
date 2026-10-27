@@ -489,7 +489,7 @@ body {
 .keygen__or { font-size: 12px; color: var(--fg-2); }
 /* Doubled-up selectors so these beat .btn and .field select from other stylesheets. */
 .btn.keygen__btn { height: 28px; padding: 0 10px; font-size: 12px; gap: 6px; }
-.field select.keygen__kind {
+.keygen__row .keygen__kind {
   height: 28px; padding: 0 6px;
   background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 6px;
   color: var(--fg-0); font: 400 12px/1.3 var(--font-sans);

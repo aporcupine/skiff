@@ -592,6 +592,7 @@ function HostDialog({
   // A key generated here. Its private part is only sent when the host is saved.
   const [generatedKey, setGeneratedKey] = useState<GeneratedKey | null>(null);
   const [keyComment, setKeyComment] = useState("");
+  const [generatingKey, setGeneratingKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { status } = useVault();
@@ -791,9 +792,10 @@ function HostDialog({
             }
             {authMethod === "key" && !generatedKey && (
               <GenerateKeyRow
+                onBusyChange={setGeneratingKey}
                 onGenerated={(key) => {
                   setGeneratedKey(key);
-                  setKeyComment(defaultKeyComment(label || hostname));
+                  setKeyComment(defaultKeyComment(label.trim() || hostname.trim()));
                   setCredValue("");
                   setPassphrase("");
                 }}
@@ -901,7 +903,7 @@ function HostDialog({
           {errors.form && <div className="field-error">{errors.form}</div>}
           <div className="dialog__footer">
             <button type="button" className="btn btn--secondary" onClick={() => onClose(false)}>Cancel</button>
-            <button type="submit" className="btn btn--primary" disabled={busy || !hostname || !username}>
+            <button type="submit" className="btn btn--primary" disabled={busy || generatingKey || !hostname || !username}>
               {busy ? "Saving…" : (mode === "edit" ? "Save changes" : "Save host")}
             </button>
           </div>
