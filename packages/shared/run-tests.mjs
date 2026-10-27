@@ -35,4 +35,5 @@ const result = spawnSync(process.execPath, ["--test", ...tests], {
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${tsxLoader}`.trim(),
   },
 });
+if (result.error) console.error("Failed to run node --test:", result.error);
 process.exit(result.status ?? 1);
