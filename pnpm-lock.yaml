@@ -151,6 +151,12 @@ importers:
 
   packages/shared:
     devDependencies:
+      '@types/ssh2':
+        specifier: ^1.15.1
+        version: 1.15.5
+      ssh2:
+        specifier: ^1.16.0
+        version: 1.17.0
       tsx:
         specifier: ^4.16.5
         version: 4.22.3
